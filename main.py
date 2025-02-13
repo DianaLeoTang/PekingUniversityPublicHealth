@@ -1,29 +1,54 @@
-'''
-Author: Diana Tang
-Date: 2025-02-13 21:48:23
-LastEditors: Diana Tang
-Description: some description
-FilePath: /PekingUniversityCode/PekingUniversityPublicHealth/main.py
-'''
-from docx import Document
 import re
 
-def remove_page_numbers(input_file, output_file):
-    doc = Document(input_file)
-    # 修改后的正则表达式，匹配数字/578，后面没有点号
-    pattern = r'\d+/578'
+def remove_unnecessary_line_breaks(text):
+    """
+    删除不必要的折行符（如果行尾没有标点符号）
+    """
+    # 将文本按行分割
+    lines = text.splitlines()
     
-    # 处理所有段落
-    for paragraph in doc.paragraphs:
-        if re.search(pattern, paragraph.text):
-            # 替换匹配到的内容
-            new_text = re.sub(pattern, '', paragraph.text)
-            paragraph.text = new_text
+    # 初始化一个列表来存储处理后的行
+    processed_lines = []
     
-    # 保存修改后的文档
-    doc.save(output_file)
+    # 遍历每一行
+    i = 0
+    while i < len(lines):
+        # 如果当前行不为空
+        if lines[i].strip():
+            # 检查当前行末尾是否有标点符号
+            if not re.search(r'[。！？，、；：,.!?;:]$', lines[i].rstrip()):
+                # 如果行尾没有标点符号，则与下一行合并
+                if i < len(lines) - 1:
+                    lines[i + 1] = lines[i].rstrip() + ' ' + lines[i + 1].lstrip()
+                else:
+                    processed_lines.append(lines[i].rstrip())
+            else:
+                # 如果行尾有标点符号，则直接保留
+                processed_lines.append(lines[i].rstrip())
+        i += 1
+    
+    # 将处理后的行重新组合成文本
+    processed_text = '\n'.join(processed_lines)
+    return processed_text
 
-# 使用示例
-input_file = "./我的科研助理：GPT.docx"  # 你的输入文件名
-output_file = "处理后文档.docx"  # 你想保存的文件名
-remove_page_numbers(input_file, output_file)
+def process_txt_file(input_file, output_file):
+    """
+    处理TXT文件：读取输入文件，删除不必要的折行符，保存到输出文件
+    """
+    # 读取输入文件内容
+    with open(input_file, 'r', encoding='utf-8') as file:
+        text = file.read()
+    
+    # 处理文本
+    processed_text = remove_unnecessary_line_breaks(text)
+    
+    # 将处理后的内容写入输出文件
+    with open(output_file, 'w', encoding='utf-8') as file:
+        file.write(processed_text)
+    
+    print(f"处理后的文件已保存到: {output_file}")
+
+# 示例调用
+input_file = 'input.txt'  # 输入文件路径
+output_file = 'output.txt'  # 输出文件路径
+process_txt_file(input_file, output_file)
