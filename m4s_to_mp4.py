@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import argparse
+import shutil
 from glob import glob
 
 def convert_m4s_to_mp4(input_file, output_file=None):
@@ -19,24 +20,34 @@ def convert_m4s_to_mp4(input_file, output_file=None):
     if output_file is None:
         output_file = os.path.splitext(input_file)[0] + '.mp4'
     
+    print(f"转换: {input_file} -> {output_file}")
+    
     try:
         # 使用FFmpeg进行转换
-        # -i: 指定输入文件
-        # -c copy: 复制原始编解码器，不重新编码（保持质量，提高速度）
-        # -y: 覆盖输出文件（如果存在）
         cmd = ['ffmpeg', '-i', input_file, '-c', 'copy', '-y', output_file]
         
-        # 执行命令
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
-        print(f"转换成功: {input_file} -> {output_file}")
-        return output_file
+        # 检查文件是否正确生成
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            print(f"转换成功: {input_file} -> {output_file}")
+            return output_file
+        else:
+            print("转换失败，尝试使用备用方法...")
+            # 备用方法: 使用文件扩展名更改
+            try:
+                with open(input_file, 'rb') as src, open(output_file, 'wb') as dst:
+                    dst.write(src.read())
+                print(f"使用直接拷贝方法: {input_file} -> {output_file}")
+                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                    return output_file
+            except Exception as e:
+                print(f"直接拷贝失败: {e}")
+            
+            return None
     
-    except subprocess.CalledProcessError as e:
-        print(f"转换失败: {e}")
-        return None
     except Exception as e:
-        print(f"发生错误: {e}")
+        print(f"转换时发生错误: {e}")
         return None
 
 def merge_video_audio_m4s(video_m4s, audio_m4s, output_file=None):
@@ -54,33 +65,54 @@ def merge_video_audio_m4s(video_m4s, audio_m4s, output_file=None):
     # 如果没有提供输出文件名，则自动生成
     if output_file is None:
         base_name = os.path.splitext(video_m4s)[0]
-        # 移除可能的后缀如"_video"
         base_name = base_name.replace('_video', '')
         output_file = f"{base_name}.mp4"
     
+    print(f"合并: {video_m4s} + {audio_m4s} -> {output_file}")
+    
+    # 尝试合并
     try:
-        # 使用FFmpeg合并视频和音频
         cmd = [
             'ffmpeg',
-            '-i', video_m4s,  # 视频输入
-            '-i', audio_m4s,  # 音频输入
-            '-c', 'copy',     # 复制编解码器（不重新编码）
-            '-y',             # 覆盖输出文件
-            output_file
+            '-i', video_m4s,
+            '-i', audio_m4s,
+            '-c', 'copy',
+            '-y', output_file
         ]
         
-        # 执行命令
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
-        print(f"合并成功: {video_m4s} + {audio_m4s} -> {output_file}")
-        return output_file
+        # 检查是否成功
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            print(f"合并成功: {video_m4s} + {audio_m4s} -> {output_file}")
+            return output_file
+        else:
+            # 如果合并失败，尝试使用备用方法
+            print("合并失败，尝试使用备用方法...")
+            alt_cmd = [
+                'ffmpeg',
+                '-i', video_m4s,
+                '-i', audio_m4s,
+                '-bsf:a', 'aac_adtstoasc',
+                '-c', 'copy',
+                '-y', output_file
+            ]
+            
+            alt_result = subprocess.run(alt_cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                print(f"备用方法合并成功: {video_m4s} + {audio_m4s} -> {output_file}")
+                return output_file
+            else:
+                # 如果仍然失败，只使用视频文件
+                print("备用方法合并失败，只使用视频文件...")
+                return convert_m4s_to_mp4(video_m4s, output_file)
     
-    except subprocess.CalledProcessError as e:
-        print(f"合并失败: {e}")
-        return None
     except Exception as e:
-        print(f"发生错误: {e}")
-        return None
+        print(f"合并时发生错误: {e}")
+        # 如果出错，只使用视频文件
+        print("发生错误，只使用视频文件...")
+        return convert_m4s_to_mp4(video_m4s, output_file)
 
 def process_bilibili_structure(root_dir):
     """
@@ -90,9 +122,15 @@ def process_bilibili_structure(root_dir):
         root_dir (str): 包含多个视频目录的根目录
     """
     # 遍历根目录下的所有子目录（视频ID目录）
-    for video_dir in [d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d)) and d.isdigit()]:
+    video_dirs = [d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d)) and d.isdigit()]
+    
+    if not video_dirs:
+        print(f"在 {root_dir} 中没有找到视频目录")
+        return
+    
+    for video_dir in video_dirs:
         video_path = os.path.join(root_dir, video_dir)
-        print(f"处理视频目录: {video_dir}")
+        print(f"\n处理视频目录: {video_dir}")
         
         # 查找所有m4s文件
         m4s_files = []
@@ -104,8 +142,8 @@ def process_bilibili_structure(root_dir):
         if not m4s_files:
             print(f"  在 {video_dir} 中没有找到m4s文件")
             continue
-            
-        # 获取视频标题（如果有videoInfo.json）
+        
+        # 获取视频标题
         video_title = video_dir
         json_path = os.path.join(video_path, 'videoInfo.json')
         if os.path.exists(json_path):
@@ -115,34 +153,61 @@ def process_bilibili_structure(root_dir):
                     video_info = json.load(f)
                     if 'title' in video_info:
                         video_title = video_info['title']
+                        # 移除标题中的非法字符
+                        video_title = "".join([c for c in video_title if c.isalnum() or c in " _-.,()[]{}"])
             except Exception as e:
                 print(f"  读取视频信息失败: {e}")
         
-        # 分类处理不同分P的视频
-        video_parts = {}
-        for m4s_file in m4s_files:
-            # 提取分P标识符（例如 341072436_u1-1-30232.m4s）
-            filename = os.path.basename(m4s_file)
-            part_match = filename.split('_')[0]
-            if part_match not in video_parts:
-                video_parts[part_match] = []
-            video_parts[part_match].append(m4s_file)
+        # 打印找到的文件
+        print(f"  找到 {len(m4s_files)} 个m4s文件:")
+        for f in m4s_files:
+            print(f"    - {os.path.basename(f)} ({os.path.getsize(f) / 1024 / 1024:.2f} MB)")
         
-        # 对每个分P，处理视频
-        for part_id, files in video_parts.items():
-            if len(files) == 1:
-                # 只有一个文件，直接转换
-                output_file = os.path.join(root_dir, f"{video_title}_{part_id}.mp4")
-                convert_m4s_to_mp4(files[0], output_file)
-            else:
-                # 多个文件，可能需要合并
-                # 通常，较大的是视频文件，较小的是音频文件
-                files.sort(key=lambda x: os.path.getsize(x), reverse=True)
-                if len(files) >= 2:
-                    output_file = os.path.join(root_dir, f"{video_title}_{part_id}.mp4")
-                    merge_video_audio_m4s(files[0], files[1], output_file)
-                else:
-                    print(f"  警告: 分P {part_id} 没有足够的文件进行合并")
+        # 识别视频和音频文件
+        # 哔哩哔哩通常使用特定的后缀
+        video_files = [f for f in m4s_files if '30032' in f]
+        audio_files = [f for f in m4s_files if '30232' in f]
+        
+        # 如果没找到符合特定模式的文件，按大小排序
+        if not video_files or not audio_files:
+            print("  未找到符合标准模式的文件，按大小排序...")
+            m4s_files.sort(key=lambda x: os.path.getsize(x), reverse=True)
+            
+            if len(m4s_files) >= 2:
+                video_files = [m4s_files[0]]  # 最大的文件可能是视频
+                audio_files = [m4s_files[1]]  # 第二大的可能是音频
+            elif len(m4s_files) == 1:
+                video_files = [m4s_files[0]]
+                audio_files = []
+        
+        # 输出文件路径 - 放在上级目录
+        output_dir = os.path.dirname(root_dir)
+        safe_title = video_title.replace('/', '_').replace('\\', '_')
+        output_file = os.path.join(output_dir, f"{safe_title}_{video_dir}.mp4")
+        
+        print(f"  输出文件: {output_file}")
+        
+        # 处理文件
+        if video_files and audio_files:
+            print(f"  尝试合并视频和音频...")
+            result = merge_video_audio_m4s(video_files[0], audio_files[0], output_file)
+            if not result:
+                print("  合并失败，尝试只处理视频文件...")
+                convert_m4s_to_mp4(video_files[0], output_file)
+        elif video_files:
+            print("  只找到视频文件，直接转换...")
+            convert_m4s_to_mp4(video_files[0], output_file)
+        elif m4s_files:
+            print("  使用找到的第一个m4s文件...")
+            convert_m4s_to_mp4(m4s_files[0], output_file)
+        else:
+            print("  没有可处理的文件")
+        
+        # 检查最终输出
+        if os.path.exists(output_file):
+            print(f"  成功生成: {output_file} ({os.path.getsize(output_file) / 1024 / 1024:.2f} MB)")
+        else:
+            print(f"  无法生成输出文件")
 
 def batch_process_directory(directory, pattern='*.m4s', is_paired=False):
     """
@@ -171,7 +236,9 @@ def batch_process_directory(directory, pattern='*.m4s', is_paired=False):
     if not files:
         print(f"在 {directory} 中没有找到匹配的文件")
         return
-
+    
+    print(f"找到 {len(files)} 个m4s文件")
+    
     if is_paired:
         # 尝试识别视频和音频文件对
         video_files = [f for f in files if '_video' in f or 'video' in f.lower()]
@@ -187,11 +254,13 @@ def batch_process_directory(directory, pattern='*.m4s', is_paired=False):
         
         # 配对处理
         for i in range(min(len(video_files), len(audio_files))):
-            merge_video_audio_m4s(video_files[i], audio_files[i])
+            output_file = os.path.splitext(video_files[i])[0] + '.mp4'
+            merge_video_audio_m4s(video_files[i], audio_files[i], output_file)
     else:
         # 单独处理每个文件
         for file in files:
-            convert_m4s_to_mp4(file)
+            output_file = os.path.splitext(file)[0] + '.mp4'
+            convert_m4s_to_mp4(file, output_file)
 
 def main():
     parser = argparse.ArgumentParser(description='将m4s文件转换或合并为MP4格式')
@@ -207,7 +276,15 @@ def main():
     
     args = parser.parse_args()
     
-    # 检查必要的参数组合
+    # 检查FFmpeg是否可用
+    try:
+        subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print("FFmpeg 检测成功")
+    except Exception:
+        print("错误: 未检测到FFmpeg。请确保FFmpeg已安装并添加到系统PATH中。")
+        return
+    
+    # 检查参数
     if args.directory:
         if args.bilibili:
             # 直接使用哔哩哔哩专用处理方法
